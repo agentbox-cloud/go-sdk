@@ -7,17 +7,8 @@ import (
 )
 
 const (
-	// DefaultRequestTimeout is the default timeout for API requests (30 seconds)
-	DefaultRequestTimeout = 30 * time.Second
-
-	// DefaultSandboxTimeout is the default timeout for sandbox (300 seconds)
-	DefaultSandboxTimeout = 300
-
-	// DefaultConnectTimeout is the default timeout for reconnecting to paused sandbox (3600 seconds)
-	DefaultConnectTimeout = 3600
-
-	// DefaultTemplate is the default sandbox template
-	DefaultTemplate = "base"
+	// RequestTimeout is the default timeout for API requests (30 seconds)
+	RequestTimeout = 30.0
 
 	// KeepalivePingIntervalSec is the keepalive ping interval in seconds
 	KeepalivePingIntervalSec = 50
@@ -27,11 +18,13 @@ const (
 )
 
 // ProxyTypes represents proxy configuration types
+// This matches Python SDK's httpx._types.ProxyTypes
 type ProxyTypes interface {
 	// Proxy configuration interface
 }
 
 // ConnectionConfig represents the configuration for connecting to the AgentBox API
+// This matches Python SDK's ConnectionConfig class
 type ConnectionConfig struct {
 	// Domain is the AgentBox domain (default: "agentbox.cloud")
 	Domain string
@@ -46,7 +39,7 @@ type ConnectionConfig struct {
 	// AccessToken is the access token for authentication
 	AccessToken string
 
-	// RequestTimeout is the timeout for API requests
+	// RequestTimeout is the timeout for API requests in seconds
 	RequestTimeout time.Duration
 
 	// Headers are additional headers to send with requests
@@ -54,6 +47,9 @@ type ConnectionConfig struct {
 
 	// Proxy is the proxy configuration
 	Proxy ProxyTypes
+
+	// APIURL is the computed API URL
+	APIURL string
 }
 
 // NewConnectionConfig creates a new ConnectionConfig with default values
@@ -62,13 +58,14 @@ type ConnectionConfig struct {
 // - AGENTBOX_DEBUG (default: false)
 // - AGENTBOX_API_KEY
 // - AGENTBOX_ACCESS_TOKEN
+// This matches Python SDK's ConnectionConfig.__init__()
 func NewConnectionConfig(opts *ConnectionConfigOptions) *ConnectionConfig {
 	config := &ConnectionConfig{
 		Domain:         getEnvOrDefault("AGENTBOX_DOMAIN", "agentbox.cloud"),
 		Debug:          getEnvBoolOrDefault("AGENTBOX_DEBUG", false),
 		APIKey:         os.Getenv("AGENTBOX_API_KEY"),
 		AccessToken:    os.Getenv("AGENTBOX_ACCESS_TOKEN"),
-		RequestTimeout: DefaultRequestTimeout,
+		RequestTimeout: time.Duration(RequestTimeout) * time.Second,
 		Headers:        make(map[string]string),
 	}
 
@@ -87,6 +84,8 @@ func NewConnectionConfig(opts *ConnectionConfigOptions) *ConnectionConfig {
 		}
 		if opts.RequestTimeout > 0 {
 			config.RequestTimeout = opts.RequestTimeout
+		} else if opts.RequestTimeout == 0 && opts.RequestTimeoutSet {
+			config.RequestTimeout = 0 // Explicitly set to 0 means no timeout
 		}
 		if opts.Headers != nil {
 			config.Headers = opts.Headers
@@ -98,11 +97,9 @@ func NewConnectionConfig(opts *ConnectionConfigOptions) *ConnectionConfig {
 
 	// Set API URL based on debug mode
 	if config.Debug {
-		// In debug mode, API URL is localhost
-		// This is handled in the API client
+		config.APIURL = "http://localhost:3000"
 	} else {
-		// Normal mode: https://api.{domain}
-		// This is handled in the API client
+		config.APIURL = "https://api." + config.Domain
 	}
 
 	return config
@@ -110,36 +107,31 @@ func NewConnectionConfig(opts *ConnectionConfigOptions) *ConnectionConfig {
 
 // ConnectionConfigOptions are options for creating a ConnectionConfig
 type ConnectionConfigOptions struct {
-	Domain         string
-	Debug          *bool
-	APIKey         string
-	AccessToken    string
-	RequestTimeout time.Duration
-	Headers        map[string]string
-	Proxy          ProxyTypes
+	Domain            string
+	Debug             *bool
+	APIKey            string
+	AccessToken       string
+	RequestTimeout    time.Duration
+	RequestTimeoutSet bool // Track if RequestTimeout was explicitly set
+	Headers           map[string]string
+	Proxy             ProxyTypes
 }
 
 // GetRequestTimeout returns the request timeout, using the provided timeout if not zero,
 // otherwise using the configured timeout
-func (c *ConnectionConfig) GetRequestTimeout(timeout time.Duration) time.Duration {
-	if timeout > 0 {
-		return timeout
+// This matches Python SDK's ConnectionConfig.get_request_timeout()
+func (c *ConnectionConfig) GetRequestTimeout(requestTimeout time.Duration) time.Duration {
+	if requestTimeout > 0 {
+		return requestTimeout
 	}
 	if c.RequestTimeout > 0 {
 		return c.RequestTimeout
 	}
-	return DefaultRequestTimeout
-}
-
-// APIURL returns the API URL based on the configuration
-func (c *ConnectionConfig) APIURL() string {
-	if c.Debug {
-		return "http://localhost:3000"
-	}
-	return "https://api." + c.Domain
+	return 0 // No timeout
 }
 
 // Username represents the user for operations in the sandbox
+// This matches Python SDK's Username = Literal["root", "user"]
 type Username string
 
 const (

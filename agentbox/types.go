@@ -1,11 +1,9 @@
 package agentbox
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
 // SandboxInfo contains information about a sandbox
+// This matches Python SDK's SandboxInfo
 type SandboxInfo struct {
 	SandboxID       string
 	TemplateID      string
@@ -18,6 +16,7 @@ type SandboxInfo struct {
 }
 
 // ListedSandbox represents a sandbox in a list
+// This matches Python SDK's ListedSandbox
 type ListedSandbox struct {
 	SandboxID  string
 	TemplateID string
@@ -31,11 +30,13 @@ type ListedSandbox struct {
 }
 
 // SandboxQuery is used to filter sandboxes when listing
+// This matches Python SDK's SandboxQuery
 type SandboxQuery struct {
 	Metadata map[string]string
 }
 
 // ProcessInfo contains information about a running process
+// This matches Python SDK's ProcessInfo
 type ProcessInfo struct {
 	PID  int
 	Tag  string
@@ -46,46 +47,15 @@ type ProcessInfo struct {
 }
 
 // CommandResult contains the result of a command execution
+// This matches Python SDK's CommandResult
 type CommandResult struct {
 	ExitCode int
 	Stdout   string
 	Stderr   string
 }
 
-// CommandHandle represents a handle to a running command (for background execution)
-type CommandHandle interface {
-	// PID returns the process ID
-	PID() int
-
-	// Wait waits for the command to finish and returns the result
-	Wait(ctx context.Context) (*CommandResult, error)
-
-	// Kill kills the running command
-	Kill(ctx context.Context) error
-
-	// SendStdin sends data to the command's stdin
-	SendStdin(ctx context.Context, data string) error
-}
-
-// AsyncCommandHandle represents a handle to a running command (async version)
-type AsyncCommandHandle interface {
-	// PID returns the process ID
-	PID() int
-
-	// Wait waits for the command to finish and returns the result
-	Wait(ctx context.Context) (*CommandResult, error)
-
-	// Kill kills the running command
-	Kill(ctx context.Context) error
-
-	// SendStdin sends data to the command's stdin
-	SendStdin(ctx context.Context, data string) error
-}
-
-// OutputHandler is a callback function for handling command output
-type OutputHandler func(data string)
-
 // EntryInfo contains information about a filesystem entry
+// This matches Python SDK's EntryInfo
 type EntryInfo struct {
 	Name     string
 	Path     string
@@ -95,6 +65,7 @@ type EntryInfo struct {
 }
 
 // FileType represents the type of a filesystem entry
+// This matches Python SDK's FileType
 type FileType string
 
 const (
@@ -104,12 +75,15 @@ const (
 )
 
 // FilesystemEvent represents a filesystem event
+// This matches Python SDK's FilesystemEvent
 type FilesystemEvent struct {
 	Type FilesystemEventType
+	Name string
 	Path string
 }
 
 // FilesystemEventType represents the type of filesystem event
+// This matches Python SDK's FilesystemEventType
 type FilesystemEventType string
 
 const (
@@ -118,14 +92,36 @@ const (
 	FilesystemEventTypeDelete FilesystemEventType = "delete"
 )
 
-// WatchHandle represents a handle to a filesystem watch operation
-type WatchHandle interface {
-	// Close stops watching the filesystem
-	Close() error
+// OutputHandler is a callback function for handling command output
+// This matches Python SDK's OutputHandler
+type OutputHandler func(data string)
+
+// Stderr represents stderr output (type alias for OutputHandler)
+type Stderr = OutputHandler
+
+// Stdout represents stdout output (type alias for OutputHandler)
+type Stdout = OutputHandler
+
+// PtyOutput represents PTY output (type alias for OutputHandler)
+type PtyOutput = OutputHandler
+
+// PtySize represents PTY size
+type PtySize struct {
+	Rows int
+	Cols int
 }
 
-// AsyncWatchHandle represents a handle to an async filesystem watch operation
-type AsyncWatchHandle interface {
-	// Close stops watching the filesystem
-	Close() error
+// CommandExitException represents a command exit exception
+// This matches Python SDK's CommandExitException
+type CommandExitException struct {
+	*SandboxException
+	ExitCode int
+}
+
+// NewCommandExitException creates a new CommandExitException
+func NewCommandExitException(exitCode int, message string) *CommandExitException {
+	return &CommandExitException{
+		SandboxException: NewSandboxException(message, nil),
+		ExitCode:         exitCode,
+	}
 }

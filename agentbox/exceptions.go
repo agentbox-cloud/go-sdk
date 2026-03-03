@@ -3,6 +3,7 @@ package agentbox
 import "fmt"
 
 // SandboxException is the base class for all sandbox errors
+// This matches Python SDK's SandboxException
 type SandboxException struct {
 	Message string
 	Err     error
@@ -20,36 +21,43 @@ func (e *SandboxException) Unwrap() error {
 }
 
 // TimeoutException is raised when a timeout occurs
+// This matches Python SDK's TimeoutException
 type TimeoutException struct {
 	*SandboxException
 }
 
 // InvalidArgumentException is raised when an invalid argument is provided
+// This matches Python SDK's InvalidArgumentException
 type InvalidArgumentException struct {
 	*SandboxException
 }
 
 // NotEnoughSpaceException is raised when there is not enough disk space
+// This matches Python SDK's NotEnoughSpaceException
 type NotEnoughSpaceException struct {
 	*SandboxException
 }
 
 // NotFoundException is raised when a resource is not found
+// This matches Python SDK's NotFoundException
 type NotFoundException struct {
 	*SandboxException
 }
 
 // AuthenticationException is raised when authentication fails
+// This matches Python SDK's AuthenticationException
 type AuthenticationException struct {
 	*SandboxException
 }
 
 // TemplateException is raised when the template uses old envd version
+// This matches Python SDK's TemplateException
 type TemplateException struct {
 	*SandboxException
 }
 
 // RateLimitException is raised when the API rate limit is exceeded
+// This matches Python SDK's RateLimitException
 type RateLimitException struct {
 	*SandboxException
 }
@@ -107,6 +115,8 @@ func NewRateLimitException(message string, err error) *RateLimitException {
 
 // Format functions (matching Python SDK)
 
+// FormatSandboxTimeoutException formats a sandbox timeout exception
+// This matches Python SDK's format_sandbox_timeout_exception()
 func FormatSandboxTimeoutException(message string) *TimeoutException {
 	return NewTimeoutException(
 		fmt.Sprintf("%s: This error is likely due to sandbox timeout. You can modify the sandbox timeout by passing 'timeout' when starting the sandbox or calling '.SetTimeout' on the sandbox with the desired timeout.", message),
@@ -114,6 +124,8 @@ func FormatSandboxTimeoutException(message string) *TimeoutException {
 	)
 }
 
+// FormatRequestTimeoutError formats a request timeout error
+// This matches Python SDK's format_request_timeout_error()
 func FormatRequestTimeoutError() *TimeoutException {
 	return NewTimeoutException(
 		"Request timed out — the 'request_timeout' option can be used to increase this timeout",
@@ -121,6 +133,8 @@ func FormatRequestTimeoutError() *TimeoutException {
 	)
 }
 
+// FormatExecutionTimeoutError formats an execution timeout error
+// This matches Python SDK's format_execution_timeout_error()
 func FormatExecutionTimeoutError() *TimeoutException {
 	return NewTimeoutException(
 		"Execution timed out — the 'timeout' option can be used to increase this timeout",

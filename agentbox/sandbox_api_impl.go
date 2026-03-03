@@ -6,41 +6,32 @@ import (
 	"fmt"
 	"net/url"
 	"time"
+
+	"github.com/agentbox-cloud/go-sdk/agentbox/api"
 )
 
 // sandboxApiImpl implements SandboxApi
 type sandboxApiImpl struct {
 	config *ConnectionConfig
-	client *APIClient
-}
-
-// NewSandboxApi creates a new SandboxApi instance
-func NewSandboxApi(config *ConnectionConfig) (SandboxApi, error) {
-	client, err := NewAPIClient(config, true, false)
-	if err != nil {
-		return nil, err
-	}
-
-	return &sandboxApiImpl{
-		config: config,
-		client: client,
-	}, nil
+	client *api.ApiClient
 }
 
 // List lists all running sandboxes
+// This matches Python SDK's SandboxApi.list()
 func (api *sandboxApiImpl) List(ctx context.Context, query *SandboxQuery) ([]*ListedSandbox, error) {
 	path := "/sandboxes"
 	if query != nil && query.Metadata != nil && len(query.Metadata) > 0 {
 		// Build query string - match Python SDK: URL encode both keys and values
-		// Python SDK uses: urllib.parse.quote(k): urllib.parse.quote(v)
-		// Then urlencode the result
-		params := url.Values{}
+		// Python SDK does: urllib.parse.quote(k): urllib.parse.quote(v) for each k, v
+		// Then urllib.parse.urlencode(quoted_metadata)
+		quotedMetadata := make(map[string]string)
 		for k, v := range query.Metadata {
-			// url.Values.Add() automatically URL encodes both key and value
+			quotedMetadata[url.QueryEscape(k)] = url.QueryEscape(v)
+		}
+		params := url.Values{}
+		for k, v := range quotedMetadata {
 			params.Add(k, v)
 		}
-		// The metadata parameter should be a single query string
-		// According to OpenAPI spec: "user=abc&app=prod" (each key and value URL encoded)
 		metadataStr := params.Encode()
 		path += "?metadata=" + metadataStr
 	}
@@ -62,12 +53,8 @@ func (api *sandboxApiImpl) List(ctx context.Context, query *SandboxQuery) ([]*Li
 
 	result := make([]*ListedSandbox, 0, len(sandboxes))
 	for _, s := range sandboxes {
-		// API returns camelCase field names (sandboxID, clientID, templateID, etc.)
-		// Match Python SDK: combine sandboxID and clientID as "{sandboxID}-{clientID}"
 		sandboxID := getString(s, "sandboxID")
 		clientID := getString(s, "clientID")
-
-		// Fallback to snake_case for backward compatibility
 		if sandboxID == "" {
 			sandboxID = getString(s, "sandbox_id")
 		}
@@ -80,15 +67,9 @@ func (api *sandboxApiImpl) List(ctx context.Context, query *SandboxQuery) ([]*Li
 			combinedSandboxID = fmt.Sprintf("%s-%s", sandboxID, clientID)
 		}
 
-		// Get templateID (camelCase)
-		templateID := getString(s, "templateID")
-		if templateID == "" {
-			templateID = getString(s, "template_id") // Fallback
-		}
-
 		sandbox := &ListedSandbox{
 			SandboxID:  combinedSandboxID,
-			TemplateID: templateID,
+			TemplateID: getString(s, "templateID"),
 			State:      getString(s, "state"),
 			Metadata:   getMapString(s, "metadata"),
 		}
@@ -105,13 +86,14 @@ func (api *sandboxApiImpl) List(ctx context.Context, query *SandboxQuery) ([]*Li
 			sandbox.MemoryMB = int(mem)
 		}
 
+		// Parse timestamps
 		if startedAt, ok := s["started_at"].(string); ok {
 			if t, err := time.Parse(time.RFC3339, startedAt); err == nil {
 				sandbox.StartedAt = t
 			}
 		}
 
-		if endAt, ok := s["end_at"].(string); ok && endAt != "" {
+		if endAt, ok := s["end_at"].(string); ok {
 			if t, err := time.Parse(time.RFC3339, endAt); err == nil {
 				sandbox.EndAt = &t
 			}
@@ -124,6 +106,7 @@ func (api *sandboxApiImpl) List(ctx context.Context, query *SandboxQuery) ([]*Li
 }
 
 // GetInfo gets information about a specific sandbox
+// This matches Python SDK's SandboxApi.get_info()
 func (api *sandboxApiImpl) GetInfo(ctx context.Context, sandboxID string) (*SandboxInfo, error) {
 	path := fmt.Sprintf("/sandboxes/%s", sandboxID)
 
@@ -142,61 +125,32 @@ func (api *sandboxApiImpl) GetInfo(ctx context.Context, sandboxID string) (*Sand
 		return nil, err
 	}
 
-	// API returns camelCase field names (sandboxID, clientID, templateID, etc.)
-	// Match Python SDK: combine sandboxID and clientID as "{sandboxID}-{clientID}"
-	rawSandboxID := getString(data, "sandboxID")
-	rawClientID := getString(data, "clientID")
-
-	// Fallback to snake_case for backward compatibility
-	if rawSandboxID == "" {
-		rawSandboxID = getString(data, "sandbox_id")
-	}
-	if rawClientID == "" {
-		rawClientID = getString(data, "client_id")
-	}
-
-	combinedSandboxID := rawSandboxID
-	if rawClientID != "" {
-		combinedSandboxID = fmt.Sprintf("%s-%s", rawSandboxID, rawClientID)
-	}
-
-	// Get templateID (camelCase)
-	templateID := getString(data, "templateID")
-	if templateID == "" {
-		templateID = getString(data, "template_id") // Fallback
-	}
-
-	// Get envdVersion (camelCase)
-	envdVersion := getString(data, "envdVersion")
-	if envdVersion == "" {
-		envdVersion = getString(data, "envd_version") // Fallback
-	}
-
-	// Get envdAccessToken (camelCase)
-	envdAccessToken := getString(data, "envdAccessToken")
-	if envdAccessToken == "" {
-		envdAccessToken = getString(data, "envd_access_token") // Fallback
-	}
-
 	info := &SandboxInfo{
-		SandboxID:       combinedSandboxID,
-		TemplateID:      templateID,
-		EnvdVersion:     envdVersion,
-		EnvdAccessToken: envdAccessToken,
-		Metadata:        getMapString(data, "metadata"),
+		SandboxID:  sandboxID,
+		TemplateID: getString(data, "templateID"),
+		Metadata:   getMapString(data, "metadata"),
 	}
 
 	if name, ok := data["alias"].(string); ok {
 		info.Name = name
 	}
 
+	if version, ok := data["envd_version"].(string); ok {
+		info.EnvdVersion = version
+	}
+
+	if token, ok := data["envd_access_token"].(string); ok {
+		info.EnvdAccessToken = token
+	}
+
+	// Parse timestamps
 	if startedAt, ok := data["started_at"].(string); ok {
 		if t, err := time.Parse(time.RFC3339, startedAt); err == nil {
 			info.StartedAt = t
 		}
 	}
 
-	if endAt, ok := data["end_at"].(string); ok && endAt != "" {
+	if endAt, ok := data["end_at"].(string); ok {
 		if t, err := time.Parse(time.RFC3339, endAt); err == nil {
 			info.EndAt = &t
 		}
@@ -206,20 +160,24 @@ func (api *sandboxApiImpl) GetInfo(ctx context.Context, sandboxID string) (*Sand
 }
 
 // Create creates a new sandbox
+// This matches Python SDK's SandboxApi._create_sandbox()
 func (api *sandboxApiImpl) Create(ctx context.Context, opts *CreateSandboxOptions) (*SandboxInfo, error) {
-	// Match OpenAPI spec: templateID (camelCase), envVars (camelCase)
+	// Ensure metadata and env_vars are not nil (API doesn't accept null)
+	metadata := opts.Metadata
+	if metadata == nil {
+		metadata = make(map[string]string)
+	}
+	envVars := opts.Envs
+	if envVars == nil {
+		envVars = make(map[string]string)
+	}
+
 	body := map[string]interface{}{
 		"templateID": opts.Template,
 		"timeout":    opts.Timeout,
+		"metadata":   metadata,
+		"envVars":    envVars,
 		"secure":     opts.Secure,
-	}
-
-	if opts.Metadata != nil {
-		body["metadata"] = opts.Metadata
-	}
-
-	if opts.Envs != nil {
-		body["envVars"] = opts.Envs
 	}
 
 	resp, err := api.client.Request(ctx, "POST", "/sandboxes", body)
@@ -228,90 +186,69 @@ func (api *sandboxApiImpl) Create(ctx context.Context, opts *CreateSandboxOption
 	}
 	defer resp.Body.Close()
 
-	// OpenAPI spec says POST /sandboxes returns 201 on success
-	if resp.StatusCode != 201 {
-		if resp.StatusCode >= 300 {
-			return nil, HandleAPIException(resp)
-		}
+	if resp.StatusCode >= 300 {
+		return nil, HandleAPIException(resp)
 	}
 
 	var data map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("failed to decode response body: %w", err)
+		return nil, err
 	}
 
-	// API returns camelCase field names (sandboxID, clientID, templateID, etc.)
-	// Match Python SDK: combine sandboxID and clientID as "{sandboxID}-{clientID}"
-	rawSandboxID := getString(data, "sandboxID")
-	rawClientID := getString(data, "clientID")
-
-	// Fallback to snake_case for backward compatibility
-	if rawSandboxID == "" {
-		rawSandboxID = getString(data, "sandbox_id")
-	}
-	if rawClientID == "" {
-		rawClientID = getString(data, "client_id")
-	}
-
-	// Check if we got the required fields
-	if rawSandboxID == "" {
-		return nil, fmt.Errorf("missing sandboxID in response: %v", data)
-	}
-
-	combinedSandboxID := rawSandboxID
-	if rawClientID != "" {
-		combinedSandboxID = fmt.Sprintf("%s-%s", rawSandboxID, rawClientID)
-	}
-
-	// Get templateID (camelCase)
-	templateID := getString(data, "templateID")
-	if templateID == "" {
-		templateID = getString(data, "template_id") // Fallback
-	}
-
-	// Get envdVersion (camelCase)
-	envdVersion := getString(data, "envdVersion")
-	if envdVersion == "" {
-		envdVersion = getString(data, "envd_version") // Fallback
-	}
-
-	// Get envdAccessToken (camelCase)
-	envdAccessToken := getString(data, "envdAccessToken")
-	if envdAccessToken == "" {
-		envdAccessToken = getString(data, "envd_access_token") // Fallback
+	sandboxID := getString(data, "sandboxID")
+	clientID := getString(data, "clientID")
+	if clientID != "" {
+		sandboxID = fmt.Sprintf("%s-%s", sandboxID, clientID)
 	}
 
 	info := &SandboxInfo{
-		SandboxID:       combinedSandboxID,
-		TemplateID:      templateID,
-		EnvdVersion:     envdVersion,
-		EnvdAccessToken: envdAccessToken,
-		Metadata:        getMapString(data, "metadata"),
+		SandboxID:   sandboxID,
+		TemplateID:  getString(data, "templateID"),
+		EnvdVersion: getString(data, "envd_version"),
+		Metadata:    getMapString(data, "metadata"),
 	}
 
-	if name, ok := data["alias"].(string); ok {
-		info.Name = name
-	}
-
-	if startedAt, ok := data["started_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, startedAt); err == nil {
-			info.StartedAt = t
-		}
+	if token, ok := data["envd_access_token"].(string); ok {
+		info.EnvdAccessToken = token
 	}
 
 	return info, nil
 }
 
 // Connect connects to an existing sandbox
-func (api *sandboxApiImpl) Connect(ctx context.Context, sandboxID string) (*SandboxInfo, error) {
+// This matches Python SDK's SandboxApi._cls_connect()
+// If the sandbox is paused, it will be automatically resumed.
+// timeout: Timeout for the sandbox in seconds. For running sandboxes, the timeout will update only if the new timeout is longer than the existing one.
+func (api *sandboxApiImpl) Connect(ctx context.Context, sandboxID string, timeout *int) (*SandboxInfo, error) {
+	// Build request body with timeout (matching Python SDK's ConnectSandbox)
+	body := map[string]interface{}{}
+	if timeout != nil {
+		body["timeout"] = *timeout
+	}
+
+	resp, err := api.client.Request(ctx, "POST", fmt.Sprintf("/sandboxes/%s/connect", sandboxID), body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		return nil, NewSandboxException(
+			fmt.Sprintf("Sandbox %s not found", sandboxID),
+			nil,
+		)
+	}
+
+	if resp.StatusCode >= 300 {
+		return nil, HandleAPIException(resp)
+	}
+
 	return api.GetInfo(ctx, sandboxID)
 }
 
 // Kill kills a sandbox
 func (api *sandboxApiImpl) Kill(ctx context.Context, sandboxID string) (bool, error) {
-	path := fmt.Sprintf("/sandboxes/%s", sandboxID)
-
-	resp, err := api.client.Request(ctx, "DELETE", path, nil)
+	resp, err := api.client.Request(ctx, "DELETE", fmt.Sprintf("/sandboxes/%s", sandboxID), nil)
 	if err != nil {
 		return false, err
 	}
@@ -330,12 +267,11 @@ func (api *sandboxApiImpl) Kill(ctx context.Context, sandboxID string) (bool, er
 
 // SetTimeout sets the timeout for a sandbox
 func (api *sandboxApiImpl) SetTimeout(ctx context.Context, sandboxID string, timeout int) error {
-	path := fmt.Sprintf("/sandboxes/%s/timeout", sandboxID)
 	body := map[string]interface{}{
 		"timeout": timeout,
 	}
 
-	resp, err := api.client.Request(ctx, "POST", path, body)
+	resp, err := api.client.Request(ctx, "POST", fmt.Sprintf("/sandboxes/%s/timeout", sandboxID), body)
 	if err != nil {
 		return err
 	}
@@ -350,21 +286,11 @@ func (api *sandboxApiImpl) SetTimeout(ctx context.Context, sandboxID string, tim
 
 // Pause pauses a sandbox
 func (api *sandboxApiImpl) Pause(ctx context.Context, sandboxID string) error {
-	path := fmt.Sprintf("/sandboxes/%s/pause", sandboxID)
-
-	resp, err := api.client.Request(ctx, "POST", path, nil)
+	resp, err := api.client.Request(ctx, "POST", fmt.Sprintf("/sandboxes/%s/pause", sandboxID), nil)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == 404 {
-		return NewNotFoundException(fmt.Sprintf("Sandbox %s not found", sandboxID), nil)
-	}
-
-	if resp.StatusCode == 409 {
-		return fmt.Errorf("sandbox is already paused or cannot be paused")
-	}
 
 	if resp.StatusCode >= 300 {
 		return HandleAPIException(resp)
@@ -375,30 +301,35 @@ func (api *sandboxApiImpl) Pause(ctx context.Context, sandboxID string) error {
 
 // Resume resumes a paused sandbox
 func (api *sandboxApiImpl) Resume(ctx context.Context, sandboxID string, timeout *int) (*SandboxInfo, error) {
-	path := fmt.Sprintf("/sandboxes/%s/resume", sandboxID)
-
-	// OpenAPI spec says requestBody is required, but Python SDK allows optional timeout
-	// We'll always send a body, using default timeout if not provided
-	body := map[string]interface{}{
-		"timeout": 15, // Default from OpenAPI spec
-	}
+	body := map[string]interface{}{}
 	if timeout != nil {
 		body["timeout"] = *timeout
 	}
 
-	resp, err := api.client.Request(ctx, "POST", path, body)
+	resp, err := api.client.Request(ctx, "POST", fmt.Sprintf("/sandboxes/%s/resume", sandboxID), body)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 404 {
-		return nil, NewNotFoundException(fmt.Sprintf("Paused sandbox %s not found", sandboxID), nil)
+	if resp.StatusCode >= 300 {
+		return nil, HandleAPIException(resp)
 	}
 
-	if resp.StatusCode == 409 {
-		return nil, fmt.Errorf("sandbox is already running or cannot be resumed")
+	return api.GetInfo(ctx, sandboxID)
+}
+
+// GetADBPublicInfo gets ADB public information for a sandbox
+// This matches Python SDK's SandboxApi._get_adb_public_info()
+func (api *sandboxApiImpl) GetADBPublicInfo(ctx context.Context, sandboxID string) (*ADBPublicInfo, error) {
+	// Python SDK uses: /sandboxes/{sandbox_id}/adb-public-info (with hyphen, not slash)
+	path := fmt.Sprintf("/sandboxes/%s/adb-public-info", sandboxID)
+
+	resp, err := api.client.Request(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		return nil, HandleAPIException(resp)
@@ -409,58 +340,12 @@ func (api *sandboxApiImpl) Resume(ctx context.Context, sandboxID string, timeout
 		return nil, err
 	}
 
-	// API returns camelCase field names (sandboxID, clientID, templateID, etc.)
-	// Match Python SDK: combine sandboxID and clientID as "{sandboxID}-{clientID}"
-	rawSandboxID := getString(data, "sandboxID")
-	rawClientID := getString(data, "clientID")
-
-	// Fallback to snake_case for backward compatibility
-	if rawSandboxID == "" {
-		rawSandboxID = getString(data, "sandbox_id")
-	}
-	if rawClientID == "" {
-		rawClientID = getString(data, "client_id")
-	}
-
-	combinedSandboxID := rawSandboxID
-	if rawClientID != "" {
-		combinedSandboxID = fmt.Sprintf("%s-%s", rawSandboxID, rawClientID)
-	}
-
-	// Get templateID (camelCase)
-	templateID := getString(data, "templateID")
-	if templateID == "" {
-		templateID = getString(data, "template_id") // Fallback
-	}
-
-	// Get envdVersion (camelCase)
-	envdVersion := getString(data, "envdVersion")
-	if envdVersion == "" {
-		envdVersion = getString(data, "envd_version") // Fallback
-	}
-
-	// Get envdAccessToken (camelCase)
-	envdAccessToken := getString(data, "envdAccessToken")
-	if envdAccessToken == "" {
-		envdAccessToken = getString(data, "envd_access_token") // Fallback
-	}
-
-	info := &SandboxInfo{
-		SandboxID:       combinedSandboxID,
-		TemplateID:      templateID,
-		EnvdVersion:     envdVersion,
-		EnvdAccessToken: envdAccessToken,
-		Metadata:        getMapString(data, "metadata"),
-	}
-
-	if name, ok := data["alias"].(string); ok {
-		info.Name = name
-	}
-
-	if startedAt, ok := data["started_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, startedAt); err == nil {
-			info.StartedAt = t
-		}
+	// Extract fields (support both camelCase and snake_case, matching Python SDK)
+	info := &ADBPublicInfo{
+		ADBIP:      getStringWithFallback(data, "adbIp", "adb_ip"),
+		ADBPort:    getIntWithFallback(data, "adbPort", "adb_port"),
+		PublicKey:  getStringWithFallback(data, "publicKey", "public_key"),
+		PrivateKey: getStringWithFallback(data, "privateKey", "private_key"),
 	}
 
 	return info, nil
@@ -469,21 +354,47 @@ func (api *sandboxApiImpl) Resume(ctx context.Context, sandboxID string, timeout
 // Helper functions
 
 func getString(m map[string]interface{}, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
+	if val, ok := m[key].(string); ok {
+		return val
 	}
 	return ""
 }
 
+func getInt(m map[string]interface{}, key string) int {
+	if val, ok := m[key].(float64); ok {
+		return int(val)
+	}
+	return 0
+}
+
 func getMapString(m map[string]interface{}, key string) map[string]string {
-	if v, ok := m[key].(map[string]interface{}); ok {
-		result := make(map[string]string)
-		for k, val := range v {
-			if s, ok := val.(string); ok {
-				result[k] = s
+	result := make(map[string]string)
+	if val, ok := m[key].(map[string]interface{}); ok {
+		for k, v := range val {
+			if str, ok := v.(string); ok {
+				result[k] = str
 			}
 		}
-		return result
 	}
-	return make(map[string]string)
+	return result
+}
+
+// getStringWithFallback gets a string value, trying multiple keys
+func getStringWithFallback(m map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if val, ok := m[key].(string); ok {
+			return val
+		}
+	}
+	return ""
+}
+
+// getIntWithFallback gets an int value, trying multiple keys
+func getIntWithFallback(m map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		if val, ok := m[key].(float64); ok {
+			return int(val)
+		}
+	}
+	return 0
 }
