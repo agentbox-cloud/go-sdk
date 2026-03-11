@@ -152,6 +152,10 @@ func (h *streamCommandHandle) processStream(ctx context.Context) {
 		select {
 		case msg, ok := <-h.msgChan:
 			if !ok {
+				// msgChan might be closed before we observe a pending parser error in errChan.
+				// Drain errChan non-blockingly first so we don't lose the real failure.
+				h.consumePendingStreamError()
+
 				// Channel closed - stream ended
 				// If we don't have a result yet, it means the stream ended without EndEvent
 				// This might happen if the server closes the connection unexpectedly
@@ -233,18 +237,41 @@ func (h *streamCommandHandle) processStream(ctx context.Context) {
 				continue
 			}
 
-		case err := <-h.errChan:
+		case err, ok := <-h.errChan:
+			if !ok {
+				// errChan closed normally; wait for msgChan close or context cancellation.
+				continue
+			}
 			if err != nil {
 				h.mu.Lock()
 				h.streamErr = err
 				h.mu.Unlock()
+				return
 			}
-			return
 
 		case <-ctx.Done():
 			h.mu.Lock()
 			h.streamErr = ctx.Err()
 			h.mu.Unlock()
+			return
+		}
+	}
+}
+
+func (h *streamCommandHandle) consumePendingStreamError() {
+	for {
+		select {
+		case err, ok := <-h.errChan:
+			if !ok {
+				return
+			}
+			if err != nil {
+				h.mu.Lock()
+				h.streamErr = err
+				h.mu.Unlock()
+				return
+			}
+		default:
 			return
 		}
 	}
