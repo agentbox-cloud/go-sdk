@@ -445,6 +445,7 @@ func resolveSandboxSession(
 			Metadata:       opts.Metadata,
 			Envs:           opts.Envs,
 			Secure:         opts.Secure,
+			AutoPause:      opts.AutoPause,
 			APIKey:         opts.APIKey,
 			Domain:         opts.Domain,
 			Debug:          opts.Debug,

@@ -56,7 +56,7 @@ type Sandbox struct {
 // Sandbox(template=None, timeout=None, metadata=None, envs=None, secure=None,
 //
 //	api_key=None, domain=None, debug=None, sandbox_id=None,
-//	request_timeout=None, proxy=None)
+//	request_timeout=None, proxy=None, auto_pause=False)
 func NewSandbox(ctx context.Context, opts *agentbox.SandboxOptions) (*Sandbox, error) {
 	if opts == nil {
 		opts = &agentbox.SandboxOptions{}
@@ -444,6 +444,7 @@ func resolveSandboxSession(
 			Metadata:       opts.Metadata,
 			Envs:           opts.Envs,
 			Secure:         opts.Secure,
+			AutoPause:      opts.AutoPause,
 			APIKey:         opts.APIKey,
 			Domain:         opts.Domain,
 			Debug:          opts.Debug,

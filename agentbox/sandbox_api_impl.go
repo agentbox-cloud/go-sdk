@@ -53,14 +53,8 @@ func (api *sandboxApiImpl) List(ctx context.Context, query *SandboxQuery) ([]*Li
 
 	result := make([]*ListedSandbox, 0, len(sandboxes))
 	for _, s := range sandboxes {
-		sandboxID := getString(s, "sandboxID")
-		clientID := getString(s, "clientID")
-		if sandboxID == "" {
-			sandboxID = getString(s, "sandbox_id")
-		}
-		if clientID == "" {
-			clientID = getString(s, "client_id")
-		}
+		sandboxID := getStringWithFallback(s, "sandboxID", "sandbox_id")
+		clientID := getStringWithFallback(s, "clientID", "client_id")
 
 		combinedSandboxID := sandboxID
 		if clientID != "" {
@@ -69,14 +63,12 @@ func (api *sandboxApiImpl) List(ctx context.Context, query *SandboxQuery) ([]*Li
 
 		sandbox := &ListedSandbox{
 			SandboxID:  combinedSandboxID,
-			TemplateID: getString(s, "templateID"),
-			State:      getString(s, "state"),
-			Metadata:   getMapString(s, "metadata"),
+			TemplateID: getStringWithFallback(s, "templateID", "template_id"),
+			State:      getStringWithFallback(s, "state"),
+			Metadata:   getMapStringWithFallback(s, "metadata"),
 		}
 
-		if name, ok := s["alias"].(string); ok {
-			sandbox.Name = name
-		}
+		sandbox.Name = getStringWithFallback(s, "alias", "name")
 
 		if cpu, ok := s["cpu_count"].(float64); ok {
 			sandbox.CPUCount = int(cpu)
@@ -87,16 +79,12 @@ func (api *sandboxApiImpl) List(ctx context.Context, query *SandboxQuery) ([]*Li
 		}
 
 		// Parse timestamps
-		if startedAt, ok := s["started_at"].(string); ok {
-			if t, err := time.Parse(time.RFC3339, startedAt); err == nil {
-				sandbox.StartedAt = t
-			}
+		if t, ok := getTimeWithFallback(s, "started_at", "startedAt"); ok {
+			sandbox.StartedAt = t
 		}
 
-		if endAt, ok := s["end_at"].(string); ok {
-			if t, err := time.Parse(time.RFC3339, endAt); err == nil {
-				sandbox.EndAt = &t
-			}
+		if t, ok := getTimeWithFallback(s, "end_at", "endAt"); ok {
+			sandbox.EndAt = &t
 		}
 
 		result = append(result, sandbox)
@@ -125,35 +113,31 @@ func (api *sandboxApiImpl) GetInfo(ctx context.Context, sandboxID string) (*Sand
 		return nil, err
 	}
 
+	parsedSandboxID := getStringWithFallback(data, "sandboxID", "sandbox_id")
+	if parsedSandboxID == "" {
+		parsedSandboxID = sandboxID
+	}
+	clientID := getStringWithFallback(data, "clientID", "client_id")
+	if clientID != "" {
+		parsedSandboxID = fmt.Sprintf("%s-%s", parsedSandboxID, clientID)
+	}
+
 	info := &SandboxInfo{
-		SandboxID:  sandboxID,
-		TemplateID: getString(data, "templateID"),
-		Metadata:   getMapString(data, "metadata"),
-	}
-
-	if name, ok := data["alias"].(string); ok {
-		info.Name = name
-	}
-
-	if version, ok := data["envd_version"].(string); ok {
-		info.EnvdVersion = version
-	}
-
-	if token, ok := data["envd_access_token"].(string); ok {
-		info.EnvdAccessToken = token
+		SandboxID:       parsedSandboxID,
+		TemplateID:      getStringWithFallback(data, "templateID", "template_id"),
+		Name:            getStringWithFallback(data, "alias", "name"),
+		Metadata:        getMapStringWithFallback(data, "metadata"),
+		EnvdVersion:     getStringWithFallback(data, "envd_version", "envdVersion"),
+		EnvdAccessToken: getStringWithFallback(data, "envd_access_token", "envdAccessToken"),
 	}
 
 	// Parse timestamps
-	if startedAt, ok := data["started_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, startedAt); err == nil {
-			info.StartedAt = t
-		}
+	if t, ok := getTimeWithFallback(data, "started_at", "startedAt"); ok {
+		info.StartedAt = t
 	}
 
-	if endAt, ok := data["end_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, endAt); err == nil {
-			info.EndAt = &t
-		}
+	if t, ok := getTimeWithFallback(data, "end_at", "endAt"); ok {
+		info.EndAt = &t
 	}
 
 	return info, nil
@@ -178,6 +162,7 @@ func (api *sandboxApiImpl) Create(ctx context.Context, opts *CreateSandboxOption
 		"metadata":   metadata,
 		"envVars":    envVars,
 		"secure":     opts.Secure,
+		"autoPause":  opts.AutoPause,
 	}
 
 	resp, err := api.client.Request(ctx, "POST", "/sandboxes", body)
@@ -203,14 +188,12 @@ func (api *sandboxApiImpl) Create(ctx context.Context, opts *CreateSandboxOption
 
 	info := &SandboxInfo{
 		SandboxID:   sandboxID,
-		TemplateID:  getString(data, "templateID"),
-		EnvdVersion: getString(data, "envd_version"),
-		Metadata:    getMapString(data, "metadata"),
+		TemplateID:  getStringWithFallback(data, "templateID", "template_id"),
+		EnvdVersion: getStringWithFallback(data, "envd_version", "envdVersion"),
+		Metadata:    getMapStringWithFallback(data, "metadata"),
 	}
 
-	if token, ok := data["envd_access_token"].(string); ok {
-		info.EnvdAccessToken = token
-	}
+	info.EnvdAccessToken = getStringWithFallback(data, "envd_access_token", "envdAccessToken")
 
 	return info, nil
 }
@@ -368,12 +351,28 @@ func getInt(m map[string]interface{}, key string) int {
 }
 
 func getMapString(m map[string]interface{}, key string) map[string]string {
+	return getMapStringWithFallback(m, key)
+}
+
+func getMapStringWithFallback(m map[string]interface{}, keys ...string) map[string]string {
 	result := make(map[string]string)
-	if val, ok := m[key].(map[string]interface{}); ok {
-		for k, v := range val {
-			if str, ok := v.(string); ok {
-				result[k] = str
+	for _, key := range keys {
+		if val, ok := m[key].(map[string]interface{}); ok {
+			for k, v := range val {
+				switch vv := v.(type) {
+				case string:
+					result[k] = vv
+				default:
+					result[k] = fmt.Sprint(vv)
+				}
 			}
+			return result
+		}
+		if val, ok := m[key].(map[string]string); ok {
+			for k, v := range val {
+				result[k] = v
+			}
+			return result
 		}
 	}
 	return result
@@ -397,4 +396,41 @@ func getIntWithFallback(m map[string]interface{}, keys ...string) int {
 		}
 	}
 	return 0
+}
+
+func getTimeWithFallback(m map[string]interface{}, keys ...string) (time.Time, bool) {
+	for _, key := range keys {
+		if raw, ok := m[key]; ok {
+			if t, ok := parseTimeValue(raw); ok {
+				return t, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+func parseTimeValue(v interface{}) (time.Time, bool) {
+	switch tv := v.(type) {
+	case string:
+		layouts := []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02 15:04:05Z07:00",
+			"2006-01-02 15:04:05",
+		}
+		for _, layout := range layouts {
+			if t, err := time.Parse(layout, tv); err == nil {
+				return t, true
+			}
+		}
+	case float64:
+		sec := int64(tv)
+		nsec := int64((tv - float64(sec)) * float64(time.Second))
+		return time.Unix(sec, nsec), true
+	case int64:
+		return time.Unix(tv, 0), true
+	case int:
+		return time.Unix(int64(tv), 0), true
+	}
+	return time.Time{}, false
 }

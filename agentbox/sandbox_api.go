@@ -52,6 +52,7 @@ type CreateSandboxOptions struct {
 	Metadata       map[string]string
 	Envs           map[string]string
 	Secure         bool
+	AutoPause      bool
 	APIKey         string
 	Domain         string
 	Debug          bool
@@ -76,6 +77,7 @@ type SandboxOptions struct {
 	Metadata       map[string]string // Custom metadata for the sandbox
 	Envs           map[string]string // Custom environment variables (envs in Python SDK)
 	Secure         bool              // Secure all system communication with sandbox
+	AutoPause      bool              // Automatically pause sandbox after timeout
 	APIKey         string            // API key (api_key in Python SDK)
 	Domain         string            // Domain for the sandbox
 	Debug          bool              // Enable debug mode

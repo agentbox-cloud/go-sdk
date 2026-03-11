@@ -5,22 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sync"
 )
 
 // ServerStreamParser parses Connect Protocol server stream responses
 // This matches Python SDK's stream parsing logic
 type ServerStreamParser struct {
 	codec Codec
-	buf   []byte
-	mu    sync.Mutex
 }
 
 // NewServerStreamParser creates a new server stream parser
 func NewServerStreamParser(codec Codec) *ServerStreamParser {
 	return &ServerStreamParser{
 		codec: codec,
-		buf:   make([]byte, 0, 4096),
 	}
 }
 
@@ -57,11 +53,6 @@ func (p *ServerStreamParser) ReadFrom(reader io.Reader, msgChan chan<- interface
 			return
 		}
 
-		// Check for end of stream
-		if flags&EnvelopeFlagEndStream != 0 {
-			return
-		}
-
 		// Read message data
 		data := make([]byte, dataLength)
 		n, err = io.ReadFull(bufReader, data)
@@ -84,6 +75,22 @@ func (p *ServerStreamParser) ReadFrom(reader io.Reader, msgChan chan<- interface
 			return
 		}
 
+		// End stream frame may contain structured error details.
+		// We need to read and parse it before returning.
+		if flags&EnvelopeFlagEndStream != 0 {
+			if len(data) > 0 {
+				var endMsg map[string]interface{}
+				if err := json.Unmarshal(data, &endMsg); err != nil {
+					errChan <- fmt.Errorf("failed to decode end stream payload: %w", err)
+					return
+				}
+				if errObj, ok := endMsg["error"].(map[string]interface{}); ok {
+					errChan <- fmt.Errorf("connect stream error: %v", errObj)
+				}
+			}
+			return
+		}
+
 		// Decode message as map[string]interface{} (JSON object)
 		var msg map[string]interface{}
 		if err := p.codec.Decode(data, &msg); err != nil {
@@ -92,11 +99,7 @@ func (p *ServerStreamParser) ReadFrom(reader io.Reader, msgChan chan<- interface
 		}
 
 		// Send message to channel
-		select {
-		case msgChan <- msg:
-		default:
-			// Channel is full, skip this message (shouldn't happen with buffered channel)
-		}
+		msgChan <- msg
 	}
 }
 
